@@ -389,7 +389,7 @@ export default function Home() {
             data: qrByteString(payload),
             margin: qrMargin(design.size),
             qrOptions: {
-              errorCorrectionLevel: design.logo ? 'H' : design.correction,
+              errorCorrectionLevel: design.correction,
               mode: 'Byte',
             },
             dotsOptions: {
@@ -1010,7 +1010,7 @@ export default function Home() {
                   />
                   <Pick
                     label="Error correction"
-                    value={design.logo ? 'H' : design.correction}
+                    value={design.correction}
                     onChange={(v) =>
                       style({ correction: v as ErrorCorrectionLevel })
                     }
@@ -1023,8 +1023,8 @@ export default function Home() {
                   />
                 </div>
                 <p className="hint">
-                  A clear border is always included. Logos automatically use
-                  high error correction.
+                  A clear border is always included. High (30%) error correction
+                  is recommended when using a logo.
                 </p>
               </TabsContent>
             </Tabs>
