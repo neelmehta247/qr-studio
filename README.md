@@ -1,0 +1,19 @@
+# Contact QR Studio
+
+A browser-only vCard 3.0 editor with multiple phones, emails, websites and postal addresses, advanced properties, styled QR previews, logo selection, and PNG/SVG/VCF downloads.
+
+## Development
+
+- `npm install`
+- `npm run dev`
+- `npm test`
+- `npm run typecheck`
+- `npm run build`
+
+Contact details and selected logos remain in memory in the current browser tab. Reloading clears them. No contact data is sent to a backend. A contact photo URL is stored in the vCard, not fetched by the editor. Center logos are resized locally before embedding into QR exports.
+
+vCard text uses CRLF, escaped text and UTF-8-aware line folding. QR encoding explicitly converts UTF-8 to a byte string because qr-code-styling 1.9.2 uses a byte encoder that otherwise truncates non-ASCII text. Keep the international-name decode tests when updating that dependency.
+
+Tests cover serialization, repeated fields, advanced property boundaries, Unicode, overflow and QR decoding. Pattern tests simulate a camera raster at 512px with slight antialiasing; the jsQR detector can fail on pristine separated dots. Always scan-test custom designs and printed output. Dense cards or low contrast can be harder to scan. Contact imports and advanced property support vary by contacts app.
+
+Optional WebMCP tools use the same visible state. This environment had no supported WebMCP invocation context, so their live contract was not verified.
