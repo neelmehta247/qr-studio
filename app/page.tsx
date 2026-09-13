@@ -740,6 +740,12 @@ export default function Home() {
                         items={['WORK', 'HOME', 'POSTAL']}
                       />
                       <Field
+                        label="Custom label (optional)"
+                        placeholder="Head office, Factory, …"
+                        value={a.label ?? ''}
+                        onChange={(v) => setAddress(a.id, { label: v })}
+                      />
+                      <Field
                         label="Street address"
                         value={a.street}
                         onChange={(v) => setAddress(a.id, { street: v })}
@@ -781,6 +787,13 @@ export default function Home() {
                     />
                   </div>
                 ))}
+                {contact.addresses.length > 0 && (
+                  <p className="hint">
+                    Custom labels appear in compatible contacts apps. If a QR
+                    scanner drops an address or displays punctuation
+                    incorrectly, import the downloaded .vcf file instead.
+                  </p>
+                )}
                 <details className="disclosure advanced">
                   <summary>
                     Personal details & extra properties

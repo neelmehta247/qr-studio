@@ -17,3 +17,7 @@ vCard text uses CRLF, escaped text and UTF-8-aware line folding. QR encoding exp
 Tests cover serialization, repeated fields, advanced property boundaries, Unicode, overflow and QR decoding. Pattern tests simulate a camera raster at 512px with slight antialiasing; the jsQR detector can fail on pristine separated dots. Always scan-test custom designs and printed output. Dense cards or low contrast can be harder to scan. Contact imports and advanced property support vary by contacts app.
 
 Optional WebMCP tools use the same visible state. This environment had no supported WebMCP invocation context, so their live contract was not verified.
+
+Custom address labels use grouped `ADR` / `X-ABLabel` properties. Repeated standard types remain separate `ADR` entries; labels never serve as deduplication keys. Basic addresses without custom labels stay ungrouped for simpler QR readers. Empty department components are omitted from `ORG`.
+
+Address fix validation: Apple's `CNContactVCardSerialization` parsed a synthetic VCF with two WORK addresses, distinct custom labels, comma-containing streets, and a company without a trailing semicolon. All assertions passed. This does not verify Pixel's QR contact-import flow. Pixel QR scanning was reported to show only one address and literal comma escapes; use the VCF download for full-fidelity import when a scanner simplifies the card. Grouped custom labels are not understood by every QR contact parser.

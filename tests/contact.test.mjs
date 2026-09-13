@@ -55,7 +55,7 @@ test('repeat fields, escaping, boundaries and CRLF', () => {
   const card = buildVCard(sample);
   assert.equal(card.match(/^TEL;/gm).length, 2);
   assert.equal(card.match(/^ADR;/gm).length, 2);
-  assert.ok(card.includes('ORG:Design\\; Research\\, Inc.;\r\n'));
+  assert.ok(card.includes('ORG:Design\\; Research\\, Inc.\r\n'));
   assert.ok(card.includes('NOTE:First line\\nSecond line\r\n'));
   assert.ok(card.includes('TYPE=CELL,PREF'));
   assert.ok(card.startsWith('BEGIN:VCARD\r\nVERSION:3.0\r\n'));
@@ -164,3 +164,53 @@ test('oversized card fails explicitly', () =>
         height: 512,
       }),
   ));
+
+// A label is not an address identity: equal types and equal custom labels
+// must remain separate records, in their original order.
+test('same-type addresses stay separate with distinct custom-label groups', () => {
+  const addresses = sample.addresses.map((a) => ({
+    ...a,
+    type: 'WORK',
+    label: 'Office, HQ',
+  }));
+  const card = buildVCard({
+    ...sample,
+    addresses,
+    extra: 'item1.X-CUSTOM:reserved',
+  }).replace(/\r\n /g, '');
+  assert.ok(
+    card.includes(
+      'item2.ADR;TYPE=WORK:;Suite 2;10 Main Street;London;;SW1A 1AA;UK',
+    ),
+  );
+  assert.ok(
+    card.includes('item3.ADR;TYPE=WORK:;;42 Park Road;Mumbai;MH;400001;India'),
+  );
+  assert.ok(card.includes('item2.X-ABLabel:Office\\, HQ'));
+  assert.ok(card.includes('item3.X-ABLabel:Office\\, HQ'));
+  assert.equal(card.match(/(?:^|\n)(?:item\d+\.)?ADR;/g).length, 2);
+});
+test('same standard type emits both addresses without requiring custom labels', () => {
+  const card = buildVCard({
+    ...sample,
+    addresses: sample.addresses.map((a) => ({ ...a, type: 'WORK' })),
+  });
+  assert.equal(card.match(/^ADR;TYPE=WORK:/gm).length, 2);
+});
+test('company has no empty department delimiter, but populated department is preserved', () => {
+  assert.ok(
+    buildVCard({ ...sample, company: 'Acme', department: '' }).includes(
+      'ORG:Acme\r\n',
+    ),
+  );
+  assert.ok(
+    buildVCard({ ...sample, company: 'Acme', department: 'Research' }).includes(
+      'ORG:Acme;Research\r\n',
+    ),
+  );
+  assert.ok(
+    buildVCard({ ...sample, company: '', department: 'Research' }).includes(
+      'ORG:;Research\r\n',
+    ),
+  );
+});

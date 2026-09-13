@@ -7,6 +7,7 @@ export type Entry = {
 export type Address = {
   id: string;
   type: string;
+  label?: string;
   preferred: boolean;
   box: string;
   extended: string;
@@ -46,6 +47,7 @@ export const entry = (type = 'WORK'): Entry => ({
 export const address = (): Address => ({
   id: crypto.randomUUID(),
   type: 'WORK',
+  label: '',
   preferred: false,
   box: '',
   extended: '',
@@ -115,8 +117,11 @@ export function buildVCard(c: Contact): string {
     if (val.trim()) lines.push(key + ':' + escapeText(val.trim()));
   };
   add('NICKNAME', c.nickname);
-  if (c.company.trim() || c.department.trim())
-    lines.push('ORG:' + [c.company, c.department].map(escapeText).join(';'));
+  if (c.company.trim() || c.department.trim()) {
+    const organization = [c.company.trim()];
+    if (c.department.trim()) organization.push(c.department.trim());
+    lines.push('ORG:' + organization.map(escapeText).join(';'));
+  }
   add('TITLE', c.title);
   add('ROLE', c.role);
   add('BDAY', c.birthday);
@@ -140,6 +145,12 @@ export function buildVCard(c: Contact): string {
         );
     }
   }
+  // Property groups associate a custom label with exactly one address.
+  // Reserve existing user-authored groups so extra properties cannot collide.
+  const groups = new Set(
+    Array.from(c.extra.matchAll(/^(\w[\w-]*)\./gm), (m) => m[1].toLowerCase()),
+  );
+  let addressNumber = 0;
   for (const a of c.addresses) {
     const parts = [
       a.box,
@@ -150,14 +161,26 @@ export function buildVCard(c: Contact): string {
       a.postal,
       a.country,
     ];
-    if (parts.some((s) => s.trim()))
+    if (parts.some((s) => s.trim())) {
+      const label = a.label?.trim();
+      let group = '';
+      if (label) {
+        do {
+          group = `item${++addressNumber}`;
+        } while (groups.has(group));
+        groups.add(group);
+        group += '.';
+      }
       lines.push(
-        'ADR;TYPE=' +
+        group +
+          'ADR;TYPE=' +
           a.type +
           (a.preferred ? ',PREF' : '') +
           ':' +
           parts.map(escapeText).join(';'),
       );
+      if (label) lines.push(group + 'X-ABLabel:' + escapeText(label));
+    }
   }
   if (c.photo.trim()) {
     if (!/^https?:\/\/\S+$/i.test(c.photo.trim()))
