@@ -214,3 +214,60 @@ test('company has no empty department delimiter, but populated department is pre
     ),
   );
 });
+
+// ZXing VCardResultParser.matchVCardPrefixedField matches only a bare property
+// name after a newline. This reproduces its address-name matching boundary, not
+// the entire proprietary Pixel/Lens parser or Android contact-save UI.
+// https://github.com/zxing/zxing/blob/master/core/src/main/java/com/google/zxing/client/result/VCardResultParser.java
+const scannerAddressMatches = (text) =>
+  Array.from(
+    text.matchAll(/(?:^|\n)ADR(?:;([^:]*))?:([^\r\n]*)/gi),
+    (match) => match[2],
+  );
+const customAddresses = sample.addresses.map((a, i) => ({
+  ...a,
+  type: 'WORK',
+  label: i === 0 ? 'Head office' : 'Factory',
+}));
+test('standard QR labels restore addresses skipped by the grouped-property parser', () => {
+  const contact = { ...sample, addresses: customAddresses };
+  const fullCard = buildVCard(contact);
+  const standardQR = buildVCard(contact, { addressLabels: 'standard' });
+  assert.equal(
+    scannerAddressMatches(fullCard).length,
+    0,
+    'reproduce original regression',
+  );
+  const matches = scannerAddressMatches(standardQR);
+  assert.equal(matches.length, 2);
+  assert.ok(matches[0].includes('10 Main Street'));
+  assert.ok(matches[1].includes('42 Park Road'));
+  assert.equal(standardQR.includes('X-ABLabel'), false);
+  assert.equal(
+    buildVCard(contact),
+    fullCard,
+    'QR compatibility must not mutate VCF data',
+  );
+  assert.ok(fullCard.includes('item1.X-ABLabel:Head office'));
+  assert.ok(fullCard.includes('item2.X-ABLabel:Factory'));
+});
+test('explicit custom QR format retains the full iPhone-compatible vCard', () => {
+  const contact = { ...sample, addresses: customAddresses };
+  assert.equal(
+    buildVCard(contact, { addressLabels: 'custom' }),
+    buildVCard(contact),
+  );
+});
+test('standard QR export retains escaped punctuation and repeated address types', () => {
+  const contact = {
+    ...sample,
+    addresses: customAddresses.map((a) => ({
+      ...a,
+      street: a.street + ', Block A',
+    })),
+  };
+  const text = buildVCard(contact, { addressLabels: 'standard' });
+  assert.equal(scannerAddressMatches(text).length, 2);
+  assert.ok(text.includes('Main Street\\, Block A'));
+  assert.ok(text.includes('Park Road\\, Block A'));
+});

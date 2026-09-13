@@ -339,6 +339,9 @@ function Rows({
 export default function Home() {
   const [contact, setContact] = useState<Contact>(blankContact);
   const [design, setDesign] = useState<Design>(initialDesign);
+  const [qrAddressLabels, setQrAddressLabels] = useState<'standard' | 'custom'>(
+    'standard',
+  );
   const [qrError, setQrError] = useState('');
   const [ready, setReady] = useState(false);
   const [notice, setNotice] = useState('');
@@ -351,12 +354,16 @@ export default function Home() {
   const name = displayName(contact);
   const result = useMemo(() => {
     try {
-      return { text: buildVCard(contact), error: '' };
+      return {
+        text: buildVCard(contact),
+        qrText: buildVCard(contact, { addressLabels: qrAddressLabels }),
+        error: '',
+      };
     } catch (e) {
-      return { text: '', error: (e as Error).message };
+      return { text: '', qrText: '', error: (e as Error).message };
     }
-  }, [contact]);
-  const bytes = new TextEncoder().encode(result.text).length;
+  }, [contact, qrAddressLabels]);
+  const bytes = new TextEncoder().encode(result.qrText).length;
   const patch = (key: keyof Contact, value: Contact[keyof Contact]) =>
     setContact((c) => ({ ...c, [key]: value }));
   const style = (p: Partial<Design>) => setDesign((d) => ({ ...d, ...p }));
@@ -365,7 +372,7 @@ export default function Home() {
       .replace(/[^\p{L}\p{N}_-]+/gu, '-')
       .replace(/^-|-$/g, '')
       .slice(0, 60) || 'contact';
-  const payload = name && !result.error ? result.text : '';
+  const payload = name && !result.error ? result.qrText : '';
   const badContrast =
     Math.min(
       contrast(design.ink, design.background),
@@ -1037,6 +1044,26 @@ export default function Home() {
                 Live preview
               </span>
             </div>
+            {contact.addresses.some((a) => a.label?.trim()) && (
+              <div className="qr-label-settings">
+                <Pick
+                  label="Address labels in QR"
+                  value={qrAddressLabels}
+                  onChange={(value) =>
+                    setQrAddressLabels(value as 'standard' | 'custom')
+                  }
+                  items={[
+                    ['standard', 'Standard labels · broader support'],
+                    ['custom', 'Custom labels · iPhone'],
+                  ]}
+                />
+                <p className="hint">
+                  {qrAddressLabels === 'standard'
+                    ? 'Uses Work / Home labels so basic scanners can read the addresses. Your .vcf download keeps the custom labels.'
+                    : 'Keeps your custom labels. Some Android QR scanners skip addresses in this format.'}
+                </p>
+              </div>
+            )}
             <div className="qr-stage">
               <div
                 ref={mount}
@@ -1085,6 +1112,23 @@ export default function Home() {
                 on your phone.
               </p>
             )}
+            {contact.addresses.filter((a) =>
+              [
+                a.box,
+                a.extended,
+                a.street,
+                a.city,
+                a.region,
+                a.postal,
+                a.country,
+              ].some((value) => value.trim()),
+            ).length > 1 && (
+              <p className="hint">
+                All addresses are encoded. Some Android scanners save only the
+                first postal address; use the .vcf download to import the full
+                card.
+              </p>
+            )}
             <div className="download-buttons">
               <button
                 className="primary-button"
@@ -1118,17 +1162,17 @@ export default function Home() {
             <details className="source">
               <summary>
                 <Code2 size={15} />
-                View vCard
+                View QR contact data
                 <ChevronDown size={14} />
               </summary>
-              <pre>{result.text || result.error}</pre>
+              <pre>{result.qrText || result.error}</pre>
               <button
                 className="text-button"
                 disabled={!name || !!result.error}
                 onClick={async () => {
                   try {
-                    await navigator.clipboard.writeText(result.text);
-                    setNotice('vCard copied.');
+                    await navigator.clipboard.writeText(result.qrText);
+                    setNotice('QR contact data copied.');
                   } catch {
                     setNotice(
                       'Copy was unavailable. Download the .vcf file instead.',
@@ -1137,7 +1181,7 @@ export default function Home() {
                 }}
               >
                 <Copy size={14} />
-                Copy vCard
+                Copy QR contact data
               </button>
             </details>
             <p className="tiny-note">

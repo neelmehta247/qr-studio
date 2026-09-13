@@ -105,7 +105,9 @@ export function foldLine(line: string) {
   }
   return out;
 }
-export function buildVCard(c: Contact): string {
+export type VCardOptions = { addressLabels?: 'custom' | 'standard' };
+
+export function buildVCard(c: Contact, options: VCardOptions = {}): string {
   const lines = [
     'BEGIN:VCARD',
     'VERSION:3.0',
@@ -162,7 +164,10 @@ export function buildVCard(c: Contact): string {
       a.country,
     ];
     if (parts.some((s) => s.trim())) {
-      const label = a.label?.trim();
+      // Basic QR contact readers (including ZXing) do not recognize grouped
+      // property names. Keep QR addresses ungrouped in standard-label mode;
+      // full VCF exports retain the iPhone-compatible custom label extension.
+      const label = options.addressLabels === 'standard' ? '' : a.label?.trim();
       let group = '';
       if (label) {
         do {
