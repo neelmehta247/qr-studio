@@ -1,14 +1,25 @@
-# Contact QR Studio
+# QR Studio
 
 A browser-only vCard 3.0 editor with multiple phones, emails, websites and postal addresses, advanced properties, styled QR previews, logo selection, and PNG/SVG/VCF downloads.
 
 ## Development
+
+Requires Node.js 24.x. Built with Next.js and deployed on Vercel.
 
 - `npm install`
 - `npm run dev`
 - `npm test`
 - `npm run typecheck`
 - `npm run build`
+
+Run `npm start` to serve the production build locally.
+
+## Deployment
+
+Import this repository into Vercel. `vercel.json` selects the Next.js framework,
+installs with `npm ci`, and builds with `npm run build`. Pushes to `main` deploy
+automatically through the connected GitHub integration. No environment variables
+or database are required.
 
 Contact details and selected logos remain in memory in the current browser tab. Reloading clears them. No contact data is sent to a backend. A contact photo URL is stored in the vCard, not fetched by the editor. Center logos are resized locally before embedding into QR exports.
 
