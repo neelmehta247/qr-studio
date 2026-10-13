@@ -766,6 +766,7 @@ footer {
   background: #14276b;
 }
 .color-field {
+  background: #fff;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -775,7 +776,25 @@ footer {
   height: 45px;
   font: 13px monospace;
 }
+.color-field:focus-within {
+  border-color: #245cdd;
+  box-shadow: 0 0 0 3px #245cdd26;
+}
+.color-field.is-invalid {
+  border-color: #c2413b;
+}
+.hex-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-transform: uppercase;
+  outline: none;
+}
 .color-field input[type='color'] {
+  flex: none;
   width: 30px;
   height: 30px;
   padding: 0;
@@ -865,5 +884,114 @@ footer {
   }
   .qr-output {
     max-width: 290px;
+  }
+}
+
+.field-error {
+  font-size: 12.5px;
+  font-weight: 400;
+  color: #b3362f;
+  line-height: 1.5;
+}
+.live.is-idle {
+  color: #7c8799;
+}
+.live.is-idle i {
+  background: #b5bfcf;
+}
+.qr-output {
+  transition: opacity 0.2s ease;
+}
+/* Dim only if an update takes a moment, so ordinary typing doesn't flicker. */
+.qr-output.is-updating {
+  opacity: 0.55;
+  transition-delay: 0.4s;
+}
+.upload-button.is-dragging {
+  border-color: #245cdd;
+  background: #eef3ff;
+}
+.upload-button:hover {
+  border-color: #9fb3d6;
+}
+.logo-row .text-button + .text-button {
+  margin-left: 4px;
+}
+.remove {
+  border-radius: 6px;
+}
+.remove:hover {
+  background: #fbeeee;
+}
+.inline-action {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.byte-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: #8a95a6;
+  font-variant-numeric: tabular-nums;
+}
+.source summary .byte-count + svg {
+  margin-left: 0;
+}
+.notice span {
+  flex: 1;
+}
+.notice.is-error {
+  background: #8f2a24;
+}
+.notice-action {
+  border: 0;
+  background: #ffffff26;
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+  margin: -4px -6px -4px 6px;
+}
+.notice-action:hover {
+  background: #ffffff40;
+}
+.jump-to-preview {
+  display: none;
+}
+@media (max-width: 800px) {
+  .jump-to-preview {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    position: fixed;
+    right: 16px;
+    bottom: max(16px, env(safe-area-inset-bottom));
+    z-index: 80;
+    border: 0;
+    border-radius: 999px;
+    padding: 12px 18px;
+    background: #245cdd;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    box-shadow: 0 8px 24px #172c5040;
+  }
+  .notice {
+    bottom: 76px;
+  }
+  .preview {
+    scroll-margin-top: 16px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .qr-output,
+  .qr-output.is-updating {
+    transition: none;
   }
 }

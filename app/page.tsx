@@ -33,6 +33,8 @@ import {
   Check,
   Copy,
   Code2,
+  CircleAlert,
+  ArrowDown,
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
@@ -56,6 +58,9 @@ import {
   buildVCard,
   saveBlob,
   contrast,
+  luminance,
+  normalizeHex,
+  VCardError,
   type Contact,
   type Entry,
   type Address,
@@ -119,6 +124,57 @@ const presets = [
     gradient: true,
   },
 ] as const;
+const dotStyles = [
+  ['square', 'Square'],
+  ['rounded', 'Rounded'],
+  ['dots', 'Dots'],
+  ['classy', 'Classy'],
+  ['classy-rounded', 'Classy rounded'],
+  ['extra-rounded', 'Extra rounded'],
+] as const;
+const cornerStyles = [
+  ['square', 'Square'],
+  ['dot', 'Circle'],
+  ['extra-rounded', 'Rounded'],
+] as const;
+const eyeStyles = [
+  ['square', 'Square'],
+  ['dot', 'Circle'],
+] as const;
+const addressTypes = [
+  ['WORK', 'Work'],
+  ['HOME', 'Home'],
+  ['POSTAL', 'Postal'],
+] as const;
+// Byte-mode capacity of the largest (version 40) QR code at each correction level.
+const qrCapacity: Record<ErrorCorrectionLevel, number> = {
+  L: 2953,
+  M: 2331,
+  Q: 1663,
+  H: 1273,
+};
+const correctionNames: Record<ErrorCorrectionLevel, string> = {
+  L: 'Low',
+  M: 'Medium',
+  Q: 'Quartile',
+  H: 'High',
+};
+type Notice = {
+  message: string;
+  tone?: 'error';
+  action?: { label: string; run: () => void };
+};
+type ListKey = 'phones' | 'emails' | 'urls' | 'addresses';
+const hasContent = (item: Entry | Address) =>
+  Object.entries(item).some(
+    ([key, value]) =>
+      key !== 'id' &&
+      key !== 'type' &&
+      typeof value === 'string' &&
+      value.trim() !== '',
+  );
+const prefersReducedMotion = () =>
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 function Field({
   label,
   value,
@@ -126,6 +182,9 @@ function Field({
   placeholder,
   type = 'text',
   wide = false,
+  autoComplete,
+  focusOnMount,
+  error,
 }: {
   label: string;
   value: string;
@@ -133,7 +192,16 @@ function Field({
   placeholder?: string;
   type?: string;
   wide?: boolean;
+  autoComplete?: string;
+  focusOnMount?: boolean;
+  error?: string;
 }) {
+  const errorId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Only ever true for a row the user just added, so focus follows the click.
+  useEffect(() => {
+    if (focusOnMount) inputRef.current?.focus();
+  }, [focusOnMount]);
   return (
     <label className={'field' + (wide ? ' wide' : '')}>
       {label}
@@ -142,8 +210,69 @@ function Field({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        ref={inputRef}
+        autoComplete={autoComplete}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
       />
+      {error && (
+        <span className="field-error" id={errorId}>
+          {error}
+        </span>
+      )}
     </label>
+  );
+}
+function ColorField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const id = useId();
+  const [draft, setDraft] = useState(value.toUpperCase());
+  const [synced, setSynced] = useState(value);
+  // Follow external changes (picker, presets) without clobbering in-progress typing.
+  if (value !== synced) {
+    setSynced(value);
+    if (normalizeHex(draft) !== value) setDraft(value.toUpperCase());
+  }
+  const invalid = !normalizeHex(draft);
+  return (
+    <div className="field">
+      <label htmlFor={id}>{label}</label>
+      <div className={'color-field' + (invalid ? ' is-invalid' : '')}>
+        <input
+          aria-label={`${label} color picker`}
+          type="color"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <input
+          id={id}
+          className="hex-input"
+          value={draft}
+          maxLength={7}
+          spellCheck={false}
+          autoComplete="off"
+          aria-invalid={invalid || undefined}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            // Commit full hex codes immediately; short #rgb codes wait for blur.
+            if (/^#?[0-9a-f]{6}$/i.test(e.target.value.trim()))
+              onChange(normalizeHex(e.target.value)!);
+          }}
+          onBlur={() => {
+            const hex = normalizeHex(draft);
+            if (hex) onChange(hex);
+            setDraft((hex ?? value).toUpperCase());
+          }}
+        />
+      </div>
+    </div>
   );
 }
 function Pick({
@@ -151,11 +280,13 @@ function Pick({
   value,
   onChange,
   items,
+  srLabel,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   items: readonly (string | readonly [string, string])[];
+  srLabel?: string;
 }) {
   const id = useId();
   const options = items.map((i) =>
@@ -173,7 +304,11 @@ function Pick({
         }}
         items={options}
       >
-        <SelectTrigger aria-labelledby={id} className="pick">
+        <SelectTrigger
+          aria-labelledby={srLabel ? undefined : id}
+          aria-label={srLabel}
+          className="pick"
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -235,19 +370,49 @@ function Add({
     </button>
   );
 }
+const rowCopy = {
+  phone: {
+    noun: 'Phone number',
+    add: 'Add number',
+    type: 'tel',
+    autoComplete: 'tel',
+    placeholder: '+1 555 123 4567',
+    empty: 'Add a mobile, work, or home number.',
+  },
+  email: {
+    noun: 'Email',
+    add: 'Add email',
+    type: 'email',
+    autoComplete: 'email',
+    placeholder: 'you@example.com',
+    empty: 'Add a work or personal email address.',
+  },
+  url: {
+    noun: 'Website',
+    add: 'Add link',
+    type: 'url',
+    autoComplete: 'url',
+    placeholder: 'https://example.com',
+    empty: 'Add a website, portfolio, or social profile.',
+  },
+} as const;
 function Rows({
   title,
   icon,
   rows,
   onChange,
+  onRemove,
   kind,
 }: {
   title: string;
   icon: ReactNode;
   rows: Entry[];
   onChange: (rows: Entry[]) => void;
+  onRemove: (id: string) => void;
   kind: 'phone' | 'email' | 'url';
 }) {
+  const [added, setAdded] = useState<string | null>(null);
+  const copy = rowCopy[kind];
   const update = (id: string, patch: Partial<Entry>) =>
     onChange(
       rows.map((r) =>
@@ -281,54 +446,54 @@ function Rows({
         icon={icon}
         action={
           <Add
-            onClick={() =>
-              onChange([...rows, entry(kind === 'phone' ? 'CELL' : 'WORK')])
-            }
+            onClick={() => {
+              const row = entry(kind === 'phone' ? 'CELL' : 'WORK');
+              setAdded(row.id);
+              onChange([...rows, row]);
+            }}
           >
-            Add{' '}
-            {kind === 'phone' ? 'number' : kind === 'email' ? 'email' : 'link'}
+            {copy.add}
           </Add>
         }
       >
         {title}
       </Heading>
+      {!rows.length && <p className="hint">{copy.empty}</p>}
       <div className="repeat-list">
         {rows.map((r, i) => (
           <div className="repeat-row" key={r.id}>
             <div className="repeat-main">
               <Pick
-                label={`Type`}
+                label="Type"
+                srLabel={`${copy.noun} ${i + 1} type`}
                 value={r.type}
                 onChange={(v) => update(r.id, { type: v })}
                 items={types}
               />
               <Field
-                label={`${kind === 'phone' ? 'Phone number' : kind === 'email' ? 'Email' : 'Website'} ${i + 1}`}
-                type={
-                  kind === 'phone' ? 'tel' : kind === 'email' ? 'email' : 'url'
-                }
-                placeholder={
-                  kind === 'phone'
-                    ? '+1 555 123 4567'
-                    : kind === 'email'
-                      ? 'you@example.com'
-                      : 'https://example.com'
-                }
+                label={`${copy.noun} ${i + 1}`}
+                type={copy.type}
+                placeholder={copy.placeholder}
+                autoComplete={`section-${r.id} ${copy.autoComplete}`}
+                focusOnMount={r.id === added}
                 value={r.value}
                 onChange={(v) => update(r.id, { value: v })}
               />
               <button
                 className="remove"
-                aria-label={`Remove ${kind} ${i + 1}`}
-                onClick={() => onChange(rows.filter((v) => v.id !== r.id))}
+                aria-label={`Remove ${copy.noun.toLowerCase()} ${i + 1}`}
+                title="Remove"
+                onClick={() => onRemove(r.id)}
               >
                 <X size={16} />
               </button>
             </div>
-            <Preferred
-              checked={r.preferred}
-              onChange={(v) => update(r.id, { preferred: v })}
-            />
+            {rows.length > 1 && (
+              <Preferred
+                checked={r.preferred}
+                onChange={(v) => update(r.id, { preferred: v })}
+              />
+            )}
           </div>
         ))}
       </div>
@@ -342,13 +507,20 @@ export default function Home() {
   const [qrAddressLabels, setQrAddressLabels] = useState<'standard' | 'custom'>(
     'standard',
   );
-  const [qrError, setQrError] = useState('');
+  const [qrFailed, setQrFailed] = useState(false);
+  // `ready`: the visible code matches the current inputs. `shown`: a code is
+  // visible at all (possibly the previous one while the next renders).
   const [ready, setReady] = useState(false);
-  const [notice, setNotice] = useState('');
-  const [working, setWorking] = useState(false);
+  const [shown, setShown] = useState(false);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [working, setWorking] = useState<'' | 'png' | 'svg'>('');
+  const [addedAddress, setAddedAddress] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [previewVisible, setPreviewVisible] = useState(true);
   const qrRef = useRef<QRCodeStyling | null>(null);
   const mount = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const previewRef = useRef<HTMLElement>(null);
   const currentContact = useRef(contact);
   currentContact.current = contact;
   const name = displayName(contact);
@@ -358,12 +530,31 @@ export default function Home() {
         text: buildVCard(contact),
         qrText: buildVCard(contact, { addressLabels: qrAddressLabels }),
         error: '',
+        errorField: null,
       };
     } catch (e) {
-      return { text: '', qrText: '', error: (e as Error).message };
+      return {
+        text: '',
+        qrText: '',
+        error: (e as Error).message,
+        errorField: e instanceof VCardError ? e.field : null,
+      };
     }
   }, [contact, qrAddressLabels]);
   const bytes = new TextEncoder().encode(result.qrText).length;
+  const capacity = qrCapacity[design.correction];
+  const qrError = !qrFailed
+    ? ''
+    : bytes > capacity
+      ? `This card needs ${bytes.toLocaleString()} bytes, but a QR code with ${correctionNames[design.correction]} error correction holds at most ${capacity.toLocaleString()}. Shorten or remove some fields${design.correction === 'L' ? '' : ', or lower the error correction in QR design'}. You can still download the .vcf.`
+      : 'The QR code could not be rendered. Try removing the logo or choosing another image. You can still download the .vcf.';
+  const hasDetails = Object.values(contact).some((value) =>
+    typeof value === 'string'
+      ? value.trim() !== ''
+      : (value as (Entry | Address)[]).some(hasContent),
+  );
+  const notify = (message: string, extra: Omit<Notice, 'message'> = {}) =>
+    setNotice({ message, ...extra });
   const patch = (key: keyof Contact, value: Contact[keyof Contact]) =>
     setContact((c) => ({ ...c, [key]: value }));
   const style = (p: Partial<Design>) => setDesign((d) => ({ ...d, ...p }));
@@ -373,18 +564,27 @@ export default function Home() {
       .replace(/^-|-$/g, '')
       .slice(0, 60) || 'contact';
   const payload = name && !result.error ? result.qrText : '';
+  const inks = design.gradient ? [design.ink, design.end] : [design.ink];
   const badContrast =
-    Math.min(
-      contrast(design.ink, design.background),
-      design.gradient ? contrast(design.end, design.background) : 21,
-    ) < 4.5;
+    Math.min(...inks.map((ink) => contrast(ink, design.background))) < 4.5;
+  // Light-on-dark (inverted) codes are unreadable by many scanners.
+  const inverted = inks.some(
+    (ink) => luminance(ink) > luminance(design.background),
+  );
+  const weakLogoCorrection =
+    !!design.logo && (design.correction === 'L' || design.correction === 'M');
   useEffect(() => {
     let cancelled = false;
     setReady(false);
-    setQrError('');
+    setQrFailed(false);
     qrRef.current = null;
-    mount.current?.replaceChildren();
-    if (!payload) return;
+    // Keep the previous code on screen while the next one renders, so typing
+    // doesn't make the preview blink. Only clear it when there's nothing to show.
+    if (!payload) {
+      mount.current?.replaceChildren();
+      setShown(false);
+      return;
+    }
     const timer = setTimeout(() => {
       void (async () => {
         try {
@@ -433,11 +633,12 @@ export default function Home() {
           mount.current?.replaceChildren();
           if (mount.current) qr.append(mount.current);
           setReady(true);
+          setShown(true);
         } catch {
           if (!cancelled) {
-            setQrError(
-              'This card is too large for a QR code, or its image could not be rendered. Shorten long fields or remove the logo. You can still download the vCard.',
-            );
+            mount.current?.replaceChildren();
+            setShown(false);
+            setQrFailed(true);
             setReady(false);
           }
         }
@@ -450,9 +651,29 @@ export default function Home() {
   }, [payload, design]);
   useEffect(() => {
     if (!notice) return;
-    const t = setTimeout(() => setNotice(''), 5000);
+    const t = setTimeout(() => setNotice(null), notice.action ? 8000 : 5000);
     return () => clearTimeout(t);
   }, [notice]);
+  // Contact details live only in memory, so warn before a reload or close
+  // throws them away.
+  useEffect(() => {
+    if (!hasDetails) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [hasDetails]);
+  // On narrow screens the preview sits below the long form; track whether it's
+  // on screen so a shortcut button can be offered.
+  useEffect(() => {
+    const el = previewRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(
+      ([e]) => setPreviewVisible(e.isIntersecting),
+      { threshold: 0.1 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
   useEffect(() => {
     type Tool = {
       name: string;
@@ -526,16 +747,16 @@ export default function Home() {
   }, []);
   async function downloadQR(ext: 'png' | 'svg') {
     if (!ready || !qrRef.current) return;
-    setWorking(true);
+    setWorking(ext);
     try {
       const blob = await qrRef.current.getRawData(ext);
       if (!(blob instanceof Blob)) throw new Error();
       saveBlob(blob, filename + '-qr.' + ext);
-      setNotice(`${ext.toUpperCase()} download started.`);
+      notify(`${ext.toUpperCase()} download started.`);
     } catch {
-      setNotice('The QR download failed. Please try again.');
+      notify('The QR download failed. Please try again.', { tone: 'error' });
     } finally {
-      setWorking(false);
+      setWorking('');
     }
   }
   function downloadVCard() {
@@ -544,7 +765,7 @@ export default function Home() {
       new Blob([result.text], { type: 'text/vcard;charset=utf-8' }),
       filename + '.vcf',
     );
-    setNotice('Contact download started.');
+    notify('Contact download started.');
   }
   async function uploadLogo(file?: File) {
     if (!file) return;
@@ -552,7 +773,9 @@ export default function Home() {
       !['image/png', 'image/jpeg', 'image/webp'].includes(file.type) ||
       file.size > 2 * 1024 * 1024
     ) {
-      setNotice('Choose a PNG, JPEG, or WebP image smaller than 2 MB.');
+      notify('Choose a PNG, JPEG, or WebP image smaller than 2 MB.', {
+        tone: 'error',
+      });
       return;
     }
     try {
@@ -577,9 +800,38 @@ export default function Home() {
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       style({ logo: canvas.toDataURL('image/png') });
     } catch {
-      setNotice('That image could not be read. Try another image.');
+      notify('That image could not be read. Try another image.', {
+        tone: 'error',
+      });
     }
   }
+  function removeItem(key: ListKey, id: string, noun: string) {
+    const list: (Entry | Address)[] = contact[key];
+    const index = list.findIndex((item) => item.id === id);
+    if (index < 0) return;
+    const item = list[index];
+    setContact((c) => ({
+      ...c,
+      [key]: (c[key] as (Entry | Address)[]).filter((x) => x.id !== id),
+    }));
+    if (hasContent(item))
+      notify(`${noun} removed.`, {
+        action: {
+          label: 'Undo',
+          run: () =>
+            setContact((c) => {
+              const next: (Entry | Address)[] = [...c[key]];
+              next.splice(Math.min(index, next.length), 0, item);
+              return { ...c, [key]: next };
+            }),
+        },
+      });
+  }
+  const scrollToPreview = () =>
+    previewRef.current?.scrollIntoView({
+      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+      block: 'start',
+    });
   const setAddress = (id: string, p: Partial<Address>) =>
     patch(
       'addresses',
@@ -635,24 +887,28 @@ export default function Home() {
                     label="First name"
                     value={contact.first}
                     onChange={(v) => patch('first', v)}
+                    autoComplete="given-name"
                     placeholder="Alex"
                   />
                   <Field
                     label="Last name"
                     value={contact.last}
                     onChange={(v) => patch('last', v)}
+                    autoComplete="family-name"
                     placeholder="Morgan"
                   />
                   <Field
                     label="Company"
                     value={contact.company}
                     onChange={(v) => patch('company', v)}
+                    autoComplete="organization"
                     placeholder="Company or organization"
                   />
                   <Field
                     label="Job title"
                     value={contact.title}
                     onChange={(v) => patch('title', v)}
+                    autoComplete="organization-title"
                     placeholder="What you do"
                   />
                 </div>
@@ -664,18 +920,19 @@ export default function Home() {
                   <div className="fields">
                     {(
                       [
-                        ['display', 'Display name'],
-                        ['nickname', 'Nickname'],
-                        ['prefix', 'Prefix'],
-                        ['middle', 'Middle name'],
-                        ['suffix', 'Suffix'],
-                        ['department', 'Department'],
-                        ['role', 'Role'],
+                        ['display', 'Display name', 'name'],
+                        ['nickname', 'Nickname', 'nickname'],
+                        ['prefix', 'Prefix', 'honorific-prefix'],
+                        ['middle', 'Middle name', 'additional-name'],
+                        ['suffix', 'Suffix', 'honorific-suffix'],
+                        ['department', 'Department', 'off'],
+                        ['role', 'Role', 'off'],
                       ] as const
-                    ).map(([key, label]) => (
+                    ).map(([key, label, autoComplete]) => (
                       <Field
                         key={key}
                         label={label}
+                        autoComplete={autoComplete}
                         value={contact[key]}
                         onChange={(v) => patch(key, v)}
                       />
@@ -687,6 +944,7 @@ export default function Home() {
                   icon={<Phone size={18} />}
                   rows={contact.phones}
                   onChange={(r) => patch('phones', r)}
+                  onRemove={(id) => removeItem('phones', id, 'Phone number')}
                   kind="phone"
                 />
                 <Rows
@@ -694,6 +952,7 @@ export default function Home() {
                   icon={<Mail size={18} />}
                   rows={contact.emails}
                   onChange={(r) => patch('emails', r)}
+                  onRemove={(id) => removeItem('emails', id, 'Email')}
                   kind="email"
                 />
                 <Rows
@@ -701,15 +960,18 @@ export default function Home() {
                   icon={<Globe size={18} />}
                   rows={contact.urls}
                   onChange={(r) => patch('urls', r)}
+                  onRemove={(id) => removeItem('urls', id, 'Website')}
                   kind="url"
                 />
                 <Heading
                   icon={<MapPin size={18} />}
                   action={
                     <Add
-                      onClick={() =>
-                        patch('addresses', [...contact.addresses, address()])
-                      }
+                      onClick={() => {
+                        const next = address();
+                        setAddedAddress(next.id);
+                        patch('addresses', [...contact.addresses, next]);
+                      }}
                     >
                       Add address
                     </Add>
@@ -729,12 +991,8 @@ export default function Home() {
                       <button
                         className="remove"
                         aria-label={`Remove address ${i + 1}`}
-                        onClick={() =>
-                          patch(
-                            'addresses',
-                            contact.addresses.filter((v) => v.id !== a.id),
-                          )
-                        }
+                        title="Remove address"
+                        onClick={() => removeItem('addresses', a.id, 'Address')}
                       >
                         <X size={16} />
                       </button>
@@ -744,7 +1002,7 @@ export default function Home() {
                         label="Address type"
                         value={a.type}
                         onChange={(v) => setAddress(a.id, { type: v })}
-                        items={['WORK', 'HOME', 'POSTAL']}
+                        items={addressTypes}
                       />
                       <Field
                         label="Custom label (optional)"
@@ -754,31 +1012,38 @@ export default function Home() {
                       />
                       <Field
                         label="Street address"
+                        autoComplete={`section-${a.id} address-line1`}
+                        focusOnMount={a.id === addedAddress}
                         value={a.street}
                         onChange={(v) => setAddress(a.id, { street: v })}
                       />
                       <Field
                         label="Apartment / suite"
+                        autoComplete={`section-${a.id} address-line2`}
                         value={a.extended}
                         onChange={(v) => setAddress(a.id, { extended: v })}
                       />
                       <Field
                         label="City"
+                        autoComplete={`section-${a.id} address-level2`}
                         value={a.city}
                         onChange={(v) => setAddress(a.id, { city: v })}
                       />
                       <Field
                         label="State / region"
+                        autoComplete={`section-${a.id} address-level1`}
                         value={a.region}
                         onChange={(v) => setAddress(a.id, { region: v })}
                       />
                       <Field
                         label="Postal code"
+                        autoComplete={`section-${a.id} postal-code`}
                         value={a.postal}
                         onChange={(v) => setAddress(a.id, { postal: v })}
                       />
                       <Field
                         label="Country"
+                        autoComplete={`section-${a.id} country-name`}
                         value={a.country}
                         onChange={(v) => setAddress(a.id, { country: v })}
                       />
@@ -788,10 +1053,12 @@ export default function Home() {
                         onChange={(v) => setAddress(a.id, { box: v })}
                       />
                     </div>
-                    <Preferred
-                      checked={a.preferred}
-                      onChange={(v) => setAddress(a.id, { preferred: v })}
-                    />
+                    {contact.addresses.length > 1 && (
+                      <Preferred
+                        checked={a.preferred}
+                        onChange={(v) => setAddress(a.id, { preferred: v })}
+                      />
+                    )}
                   </div>
                 ))}
                 {contact.addresses.length > 0 && (
@@ -810,6 +1077,7 @@ export default function Home() {
                     <Field
                       label="Birthday"
                       type="date"
+                      autoComplete="bday"
                       value={contact.birthday}
                       onChange={(v) => patch('birthday', v)}
                     />
@@ -817,6 +1085,10 @@ export default function Home() {
                       label="Contact photo URL"
                       type="url"
                       placeholder="https://…"
+                      autoComplete="photo"
+                      error={
+                        result.errorField === 'photo' ? result.error : undefined
+                      }
                       value={contact.photo}
                       onChange={(v) => patch('photo', v)}
                     />
@@ -832,12 +1104,26 @@ export default function Home() {
                       Extra vCard properties
                       <Textarea
                         className="code-input"
+                        spellCheck={false}
                         value={contact.extra}
                         onChange={(e) => patch('extra', e.target.value)}
+                        aria-invalid={
+                          result.errorField === 'extra' ? true : undefined
+                        }
+                        aria-describedby={
+                          result.errorField === 'extra'
+                            ? 'extra-error'
+                            : undefined
+                        }
                         placeholder={
                           'CATEGORIES:Design,Technology\nX-SOCIALPROFILE;TYPE=linkedin:https://linkedin.com/in/…'
                         }
                       />
+                      {result.errorField === 'extra' && (
+                        <span className="field-error" id="extra-error">
+                          {result.error}
+                        </span>
+                      )}
                     </label>
                   </div>
                   <p className="hint">
@@ -896,54 +1182,33 @@ export default function Home() {
                     label="Dot pattern"
                     value={design.dots}
                     onChange={(v) => style({ dots: v as DotType })}
-                    items={[
-                      'square',
-                      'rounded',
-                      'dots',
-                      'classy',
-                      'classy-rounded',
-                      'extra-rounded',
-                    ]}
+                    items={dotStyles}
                   />
                   <Pick
                     label="Corner frame"
                     value={design.corner}
                     onChange={(v) => style({ corner: v as CornerSquareType })}
-                    items={['square', 'dot', 'extra-rounded']}
+                    items={cornerStyles}
                   />
                   <Pick
                     label="Corner center"
                     value={design.eye}
                     onChange={(v) => style({ eye: v as CornerDotType })}
-                    items={['square', 'dot']}
+                    items={eyeStyles}
                   />
                 </div>
                 <Heading>Colors</Heading>
                 <div className="fields">
-                  <label className="field">
-                    Foreground
-                    <div className="color-field">
-                      <input
-                        aria-label="Foreground color"
-                        type="color"
-                        value={design.ink}
-                        onChange={(e) => style({ ink: e.target.value })}
-                      />
-                      <span>{design.ink.toUpperCase()}</span>
-                    </div>
-                  </label>
-                  <label className="field">
-                    Background
-                    <div className="color-field">
-                      <input
-                        aria-label="Background color"
-                        type="color"
-                        value={design.background}
-                        onChange={(e) => style({ background: e.target.value })}
-                      />
-                      <span>{design.background.toUpperCase()}</span>
-                    </div>
-                  </label>
+                  <ColorField
+                    label="Foreground"
+                    value={design.ink}
+                    onChange={(ink) => style({ ink })}
+                  />
+                  <ColorField
+                    label="Background"
+                    value={design.background}
+                    onChange={(background) => style({ background })}
+                  />
                 </div>
                 <label className="switch-row">
                   <span>Use a gradient</span>
@@ -953,18 +1218,13 @@ export default function Home() {
                   />
                 </label>
                 {design.gradient && (
-                  <label className="field">
-                    Gradient end
-                    <div className="color-field">
-                      <input
-                        aria-label="Gradient end color"
-                        type="color"
-                        value={design.end}
-                        onChange={(e) => style({ end: e.target.value })}
-                      />
-                      <span>{design.end.toUpperCase()}</span>
-                    </div>
-                  </label>
+                  <div className="fields">
+                    <ColorField
+                      label="Gradient end"
+                      value={design.end}
+                      onChange={(end) => style({ end })}
+                    />
+                  </div>
                 )}
                 <Heading>Center logo</Heading>
                 <input
@@ -983,6 +1243,12 @@ export default function Home() {
                     <span>Logo added</span>
                     <button
                       className="text-button"
+                      onClick={() => fileRef.current?.click()}
+                    >
+                      Replace
+                    </button>
+                    <button
+                      className="text-button"
                       onClick={() => style({ logo: '' })}
                     >
                       Remove
@@ -990,12 +1256,27 @@ export default function Home() {
                   </div>
                 ) : (
                   <button
-                    className="upload-button"
+                    className={
+                      'upload-button' + (dragging ? ' is-dragging' : '')
+                    }
                     onClick={() => fileRef.current?.click()}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setDragging(true);
+                    }}
+                    onDragLeave={() => setDragging(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragging(false);
+                      void uploadLogo(e.dataTransfer.files[0]);
+                    }}
                   >
                     <ImagePlus size={21} />
                     <span>
-                      Add a logo<small>PNG, JPEG, or WebP · up to 2 MB</small>
+                      {dragging ? 'Drop to add logo' : 'Add a logo'}
+                      <small>
+                        Click or drop an image · PNG, JPEG, or WebP up to 2 MB
+                      </small>
                     </span>
                     <Plus size={18} />
                   </button>
@@ -1030,18 +1311,20 @@ export default function Home() {
                   />
                 </div>
                 <p className="hint">
-                  A clear border is always included. High (30%) error correction
-                  is recommended when using a logo.
+                  A clear border is always included. Higher error correction
+                  scans more reliably when damaged or covered by a logo, but
+                  holds less data ({bytes.toLocaleString()} of{' '}
+                  {capacity.toLocaleString()} bytes used).
                 </p>
               </TabsContent>
             </Tabs>
           </section>
-          <aside className="preview panel">
+          <aside className="preview panel" ref={previewRef}>
             <div className="preview-heading">
               <h2>Your QR code</h2>
-              <span className="live">
+              <span className={'live' + (ready ? '' : ' is-idle')}>
                 <i />
-                Live preview
+                {ready ? 'Live preview' : shown ? 'Updating…' : 'Waiting'}
               </span>
             </div>
             {contact.addresses.some((a) => a.label?.trim()) && (
@@ -1067,19 +1350,22 @@ export default function Home() {
             <div className="qr-stage">
               <div
                 ref={mount}
-                className="qr-output"
+                className={'qr-output' + (ready ? '' : ' is-updating')}
                 role="img"
-                aria-label="Generated contact QR code"
-                style={{ display: ready ? 'block' : 'none' }}
+                aria-label={`QR code with the contact card for ${name}`}
+                aria-busy={!ready}
+                style={{ display: shown ? 'block' : 'none' }}
               />
-              {!ready && (
+              {!shown && (
                 <div className="qr-empty">
                   <QrCode size={78} strokeWidth={1} />
                   <p>
                     {result.error
-                      ? 'Check your extra properties'
+                      ? 'Fix the highlighted field to update your code'
                       : qrError
-                        ? 'Too much information for this code'
+                        ? bytes > capacity
+                          ? 'Too much information for this code'
+                          : 'This code could not be drawn'
                         : name
                           ? 'Generating your code…'
                           : 'Add your name or company to get started'}
@@ -1100,13 +1386,34 @@ export default function Home() {
                 {result.error || qrError}
               </p>
             )}
-            {badContrast && (
+            {inverted ? (
               <p className="warning">
-                These colors have low contrast. Use a darker foreground and
-                lighter background for easier scanning.
+                The foreground is lighter than the background. Many scanners
+                can&apos;t read inverted codes — use a dark foreground on a
+                light background.
+              </p>
+            ) : (
+              badContrast && (
+                <p className="warning">
+                  These colors have low contrast. Use a darker foreground and
+                  lighter background for easier scanning.
+                </p>
+              )
+            )}
+            {weakLogoCorrection && (
+              <p className="warning">
+                A logo covers part of the code.{' '}
+                {correctionNames[design.correction]} error correction may not be
+                enough for it to scan.{' '}
+                <button
+                  className="inline-action"
+                  onClick={() => style({ correction: 'H' })}
+                >
+                  Use High (30%)
+                </button>
               </p>
             )}
-            {bytes > 1100 && payload && !qrError && (
+            {bytes > 1100 && bytes <= capacity && payload && !qrError && (
               <p className="hint">
                 This is a detailed card. Use a larger printed code and test it
                 on your phone.
@@ -1132,18 +1439,19 @@ export default function Home() {
             <div className="download-buttons">
               <button
                 className="primary-button"
-                disabled={!ready || working}
+                disabled={!ready || !!working}
                 onClick={() => void downloadQR('png')}
               >
                 <Download size={17} />
-                Download PNG
+                {working === 'png' ? 'Preparing…' : 'Download PNG'}
               </button>
               <button
                 className="secondary-button"
-                disabled={!ready || working}
+                aria-label="Download SVG"
+                disabled={!ready || !!working}
                 onClick={() => void downloadQR('svg')}
               >
-                SVG
+                {working === 'svg' ? '…' : 'SVG'}
               </button>
             </div>
             <button
@@ -1163,6 +1471,11 @@ export default function Home() {
               <summary>
                 <Code2 size={15} />
                 View QR contact data
+                {payload && (
+                  <span className="byte-count">
+                    {bytes.toLocaleString()} / {capacity.toLocaleString()} bytes
+                  </span>
+                )}
                 <ChevronDown size={14} />
               </summary>
               <pre>{result.qrText || result.error}</pre>
@@ -1172,10 +1485,11 @@ export default function Home() {
                 onClick={async () => {
                   try {
                     await navigator.clipboard.writeText(result.qrText);
-                    setNotice('QR contact data copied.');
+                    notify('QR contact data copied.');
                   } catch {
-                    setNotice(
+                    notify(
                       'Copy was unavailable. Download the .vcf file instead.',
+                      { tone: 'error' },
                     );
                   }
                 }}
@@ -1186,8 +1500,8 @@ export default function Home() {
             </details>
             <p className="tiny-note">
               *Linked photos and websites need internet. Edits require
-              downloading a new QR code. Details stay in this tab and clear when
-              you reload.
+              downloading a new QR code. Details stay in this tab only and are
+              cleared when you reload or close it.
             </p>
           </aside>
         </div>
@@ -1196,12 +1510,38 @@ export default function Home() {
         Built for a good first connection.
         <span>Private by design. Yours to share.</span>
       </footer>
-      {notice && (
-        <div className="notice" role="status">
-          <Check size={17} />
-          {notice}
-        </div>
+      {!previewVisible && (
+        <button className="jump-to-preview" onClick={scrollToPreview}>
+          {ready ? <QrCode size={17} /> : <ArrowDown size={17} />}
+          {ready ? 'View QR code' : 'Preview'}
+        </button>
       )}
+      <div className="notice-region" aria-live="polite">
+        {notice && (
+          <div
+            className={'notice' + (notice.tone === 'error' ? ' is-error' : '')}
+            role={notice.tone === 'error' ? 'alert' : undefined}
+          >
+            {notice.tone === 'error' ? (
+              <CircleAlert size={17} />
+            ) : (
+              <Check size={17} />
+            )}
+            <span>{notice.message}</span>
+            {notice.action && (
+              <button
+                className="notice-action"
+                onClick={() => {
+                  notice.action?.run();
+                  setNotice(null);
+                }}
+              >
+                {notice.action.label}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

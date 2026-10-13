@@ -105,6 +105,15 @@ export function foldLine(line: string) {
   }
   return out;
 }
+// Identifies which editor field produced a validation error so it can be shown inline.
+export class VCardError extends Error {
+  field: 'photo' | 'extra';
+  constructor(message: string, field: 'photo' | 'extra') {
+    super(message);
+    this.name = 'VCardError';
+    this.field = field;
+  }
+}
 export type VCardOptions = { addressLabels?: 'custom' | 'standard' };
 
 export function buildVCard(c: Contact, options: VCardOptions = {}): string {
@@ -189,7 +198,10 @@ export function buildVCard(c: Contact, options: VCardOptions = {}): string {
   }
   if (c.photo.trim()) {
     if (!/^https?:\/\/\S+$/i.test(c.photo.trim()))
-      throw new Error('Use a complete http:// or https:// photo URL.');
+      throw new VCardError(
+        'Use a complete http:// or https:// photo URL.',
+        'photo',
+      );
     lines.push('PHOTO;VALUE=URI:' + c.photo.trim());
   }
   // Advanced properties are intentionally raw vCard 3.0 content lines, not text values.
@@ -198,13 +210,15 @@ export function buildVCard(c: Contact, options: VCardOptions = {}): string {
     .split('\n')
     .filter((s) => s.trim())) {
     if (!/^(?:[a-z0-9-]+\.)?[a-z0-9-]+(?:;[^:\r\n]+)?:[^\r\n]*$/i.test(line))
-      throw new Error(
+      throw new VCardError(
         'Each extra property needs a property name, a colon, and a value.',
+        'extra',
       );
     const key = line.split(/[;:]/)[0].split('.').pop()!.toUpperCase();
     if (['BEGIN', 'END', 'VERSION', 'FN', 'N'].includes(key))
-      throw new Error(
+      throw new VCardError(
         'Set names above; BEGIN, END, and VERSION are added automatically.',
+        'extra',
       );
     lines.push(line);
   }
@@ -221,12 +235,20 @@ export function saveBlob(blob: Blob, name: string) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+export function luminance(hex: string) {
+  const rgb = [1, 3, 5]
+    .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+}
 export function contrast(a: string, b: string) {
-  const l = (hex: string) => {
-    const rgb = [1, 3, 5]
-      .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
-      .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
-    return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
-  };
+  const l = luminance;
   return (Math.max(l(a), l(b)) + 0.05) / (Math.min(l(a), l(b)) + 0.05);
+}
+// Accepts #rgb or #rrggbb (with or without #) and returns lowercase #rrggbb.
+export function normalizeHex(value: string): string | null {
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value.trim());
+  if (!m) return null;
+  const hex = m[1].length === 3 ? m[1].replace(/./g, (c) => c + c) : m[1];
+  return '#' + hex.toLowerCase();
 }
